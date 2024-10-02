@@ -1,0 +1,125 @@
+---
+title: "Sales Relationship bewteen Volume and Penetration(Upsell)"
+author: Ross W.
+format: pdf
+editor: visual
+---
+
+## Executive Summary
+
+The analysis demonstrates that the primary driver of increased revenue is the volume of opportunities rather than the upselling of individual accounts through diverse service lines.
+
+The correlation between the number of opportunities and total sales is strong, with a correlation coefficient of **0.778**, indicating that as the number of opportunities increases, total sales also increase significantly. In contrast, the correlation between the distinct service lines sold to an account and total sales is much weaker, with a correlation coefficient of **0.195**. This suggests that upselling through more service lines does not have as significant an impact on total sales as the sheer volume of opportunities.
+
+In conclusion, focusing on generating more opportunities is likely to have a greater impact on revenue growth than emphasizing upselling efforts within existing accounts.
+
+```{r, echo=FALSE}
+#| warning: false
+
+library(dplyr)
+library(ggplot2)
+
+opp_data <- read.csv(file = "C:/Users/ross.williams/Downloads/RStudio/R_Opps_report_.csv",
+                     header = TRUE,
+                     stringsAsFactors = FALSE)
+
+opp_data_filtered_to_won_opps <- opp_data %>%
+  filter(Stage == "6 - Closed Won")
+
+# Step 1: Summarize data by account
+sales_regression <- opp_data_filtered_to_won_opps %>%
+  group_by(Acct_Id) %>%
+  summarise(
+    num_opportunities = n(),  # Number of opportunities
+    distinct_service_lines = n_distinct(Record_Type_Name),  # Distinct service lines
+    total_acv = sum(ACV_for_Quotas, na.rm = TRUE)  # Total sales (ACV)
+  )
+
+# Step 2: Calculate correlation between number of opportunities and total sales
+cor_opps_sales <- cor(sales_regression$num_opportunities, sales_regression$total_acv, use = "complete.obs")
+
+# Step 3: Calculate correlation between number of distinct service lines and total sales
+cor_service_lines_sales <- cor(sales_regression$distinct_service_lines, sales_regression$total_acv, use = "complete.obs")
+
+# Step 4: Print the results
+cat("Correlation between number of opportunities and total sales:", cor_opps_sales, "\n")
+cat("Correlation between distinct service lines and total sales:", cor_service_lines_sales, "\n")
+```
+
+### Volume vs Sales
+
+```{r}
+# Scatter plot for number of opportunities vs. total sales
+ggplot(sales_regression, aes(x = num_opportunities, y = total_acv)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship Between Number of Opportunities and Total Sales",
+    x = "Number of Opportunities",
+    y = "Total Sales (ACV)"
+  ) +
+  theme_minimal()
+```
+
+### Penetration vs Sales
+
+```{r}
+# Scatter plot for distinct service lines vs. total sales
+ggplot(sales_regression, aes(x = distinct_service_lines, y = total_acv)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship Between Distinct Service Lines and Total Sales",
+    x = "Number of Distinct Service Lines",
+    y = "Total Sales (ACV)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+library(gt)
+
+# Step 1: Summarize data by account (distinct service lines and total ACV)
+avg_median_sales <- opp_data_filtered_to_won_opps %>%
+  group_by(Acct_Id) %>%
+  summarise(
+    distinct_service_lines = n_distinct(Record_Type_Name),  # Number of distinct service lines per account
+    total_acv = sum(ACV_for_Quotas, na.rm = TRUE)  # Total sales (ACV) for each account
+  )
+
+# Step 2: Group by distinct service lines and summarize ACV metrics + count of accounts
+service_lines_summary <- avg_median_sales %>%
+  group_by(distinct_service_lines) %>%
+  summarise(
+    sum_acv = sum(total_acv),  # Sum of ACV
+    avg_acv = mean(total_acv),  # Average ACV
+    median_acv = median(total_acv),  # Median ACV
+    num_accounts = n()  # Number of accounts per distinct service line
+  )
+
+# Step 3: Use gt to format the table with dollar signs and account count
+service_lines_summary %>%
+  gt() %>%
+  tab_header(
+    title = "Summary of ACV by Number of Distinct Service Lines",
+    subtitle = "Sum, Average, Median ACV, and Number of Accounts per Service Line"
+  ) %>%
+  fmt_currency(
+    columns = vars(sum_acv, avg_acv, median_acv),  # Format these columns as currency
+    currency = "USD"  # Specify the currency format as USD
+  ) %>%
+  cols_label(
+    distinct_service_lines = "Distinct Service Lines",
+    sum_acv = "Total ACV (USD)",
+    avg_acv = "Average ACV (USD)",
+    median_acv = "Median ACV (USD)",
+    num_accounts = "# of Accounts"  # Label for the new column
+  ) %>%
+  tab_options(
+    table.font.size = "medium",  # Adjust font size
+    heading.title.font.size = "large",
+    heading.subtitle.font.size = "medium"
+  )
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).

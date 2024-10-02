@@ -1,0 +1,125 @@
+---
+title: "Density of Purchase Cycles by Service Line"
+author: "Ross W."
+format: pdf
+editor: visual
+---
+
+## Executive Summary
+
+This report provides an analysis of purchase cycles by account and service line. It includes the average and median purchase cycles, number of opportunities, and the most recent purchase date. Outliers (cycles greater than 1000 days) have been excluded to provide a clearer picture of the data. Also, because the purpose of this involves the lifeycle of purchases, any accounts with a single opportunity has been filtered out as well.
+
+Record Types have been filtered to Cost Seg, SALT, R&D (Recurring & New), LIFO, GOAT.tax., Energy. The original data set contained 67,602 rows. After filtering for Record Type, Closed Won opps, empty values the remaining data set contains 35,253 rows.
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+
+
+# Load necessary libraries
+
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+opp_data <- read.csv(file = "C:/Users/ross.williams/Downloads/RStudio/R_Opps_report_.csv",
+                     header = TRUE,
+                     stringsAsFactors = FALSE)
+
+opp_data <- read.csv(file = "C:/Users/ross.williams/Downloads/RStudio/R_Opps_report_.csv",
+                     header = TRUE,
+                     stringsAsFactors = FALSE)
+
+opp_data_filtered <- opp_data %>%
+  filter(Stage == "6 - Closed Won",
+         Record_Type_Name %in% c("Cost Seg","Energy","GOAT.tax","R&D","SALT","LIFO - IPIC / Internal", "LIFO - Auto"))
+
+# Group 1: Group by Opp_ID, Acct_Id, Record_Type_Name, Close_Date, and ACV_for_Quotas
+group1_upsell <- opp_data_filtered %>%
+  select(Opp_ID, Acct_Id, Record_Type_Name, Close_Date, ACV_for_Quotas) %>%
+  group_by(Opp_ID, Acct_Id, Record_Type_Name, Close_Date, ACV_for_Quotas) %>%
+  summarise(across(everything(), first), .groups = 'drop')
+
+# Group 2: Group by Opp_ID, CPA_Contact_Acct_ID, Record_Type_Name, Close_Date, and ACV_for_Quotas
+# Filter to include only rows where CPA_Contact_Acct_ID is not blank
+group2_upsell <- opp_data_filtered %>%
+  filter(!is.na(CPA_Contact_Acct_ID) & CPA_Contact_Acct_ID != "") %>%
+  select(Opp_ID, CPA_Contact_Acct_ID, Record_Type_Name, Close_Date, ACV_for_Quotas) %>%
+  rename(Acct_Id = CPA_Contact_Acct_ID) %>%  # Rename to match Group 1 for binding
+  group_by(Opp_ID, Acct_Id, Record_Type_Name, Close_Date, ACV_for_Quotas) %>%
+  summarise(across(everything(), first), .groups = 'drop')
+
+combined_data_upsell <- bind_rows(group1_upsell, group2_upsell)
+
+# Remove duplicates based on Opp_ID, Close_Date, and Record_Type_Name columns
+final_data_upsell <- combined_data_upsell %>%
+  distinct(Opp_ID, Close_Date, Record_Type_Name, .keep_all = TRUE)
+
+# Arrange the final data by Acct_Id and Close_Date in ascending order
+sorted_data_upsell <- final_data_upsell %>%
+  arrange(Acct_Id, as.Date(Close_Date, format = "%m/%d/%Y"))  # Convert Close_Date to Date type for proper sorting
+
+# Convert Close_Date to Date format if it's not already a Date object
+service_line_purchase_cycle <- sorted_data_upsell %>%
+  mutate(Close_Date = mdy(Close_Date)) # Assuming Close_Date is in m/d/yyyy format
+
+# Group by Acct_Id and Record_Type_Name, calculate cycles and filter
+service_line_purchase_cycle <- service_line_purchase_cycle %>%
+  group_by(Acct_Id, Record_Type_Name) %>%
+  arrange(Acct_Id, Record_Type_Name, Close_Date) %>%
+  mutate(cycle_days = as.numeric(difftime(Close_Date, lag(Close_Date), units = "days"))) %>%
+  filter(!is.na(cycle_days) & cycle_days <= 1000) %>%  # Filter out cycles > 1000 days
+  summarise(
+    avg_cycle = mean(cycle_days),
+    median_cycle = median(cycle_days),
+    num_opportunities = n() + 1, # Including the first purchase
+    most_recent_purchase = max(Close_Date) # Most recent purchase date
+  ) %>%
+  filter(num_opportunities > 1) # Filter out Acct_Id's with less than 2 purchases
+
+```
+
+## Summary Statistics of Opportunity data
+
+Record Types have been filtered to Cost Seg, SALT, R&D (Recurring & New), LIFO, GOAT.tax., Energy. The original data set contained 67,602 rows. After filtering for Record Type, Closed Won opps, empty values the remaining data set contains 35,253 rows.
+
+```{r, echo=FALSE}
+
+# Step 1: Distinct Accts and Number of Opp_ID's by Record_Type_Name
+summary_of_sorted_data_upsell <- sorted_data_upsell %>%
+  group_by(Record_Type_Name) %>%
+  summarise(
+    distinct_accts = n_distinct(Acct_Id),  # Number of distinct accounts
+    num_opps = n()  # Total number of opportunities
+  )
+# Print the summary table so it appears in the rendered document
+print(summary_of_sorted_data_upsell)
+```
+
+## Distribution of Average Purchase Cycles by Service Line
+
+The following box plot is used to visualize the distribution of purchase cycles across different service lines. The X-axis represents each service line, while the Y-axis shows the average purchase cycle in days. Each box represents the interquartile range (IQR), which is the middle 50% of the data, with the line inside the box indicating the median. The "whiskers" extend to the smallest and largest values within 1.5 times the IQR, and any points outside this range are plotted as outliers. This plot helps compare the variability and central tendency of purchase cycles across different service lines, showing which service lines have more consistent cycles and which exhibit greater variability.
+
+```{r, echo=FALSE}
+
+ggplot(service_line_purchase_cycle, aes(x = Record_Type_Name, y = avg_cycle)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Average Purchase Cycles by Service Line",
+       x = "Service Line", y = "Average Purchase Cycle (Days)") +
+  theme_minimal()
+```
+
+## Density of Purchase Cycles by Service Line
+
+The density plot supplied shows the relative concentration of data points around different values on the X-axis. In this case, the X-axis represents `avg_cycle`, the average purchase cycle (in days) for each account and service line, while the Y-axis indicates the probability density, meaning how likely data points are to occur around each X-value. Unlike a histogram, the Y-axis is scaled so that the total area under the curve sums to 1, allowing for comparison of relative distributions rather than absolute counts. The density plot uses a smoothing technique (KDE) to create a continuous curve, showing where most of the purchase cycles are concentrated. Facet wrapping (`facet_wrap(~ Record_Type_Name)`) creates separate plots for each service line, allowing for comparison across service lines with independent Y-axes
+
+```{r, echo=FALSE}
+# Density plot of purchase cycles faceted by Record_Type_Name
+ggplot(service_line_purchase_cycle, aes(x = avg_cycle)) +
+  geom_density(fill = "skyblue", alpha = 0.7) +
+  facet_wrap(~ Record_Type_Name, scales = "free") +
+  labs(title = "Density of Purchase Cycles by Service Line",
+       x = "Average Purchase Cycle (Days)",
+       y = "Density") +
+  theme_minimal()
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
