@@ -1,0 +1,286 @@
+---
+title: "CPA Channel Referral Stats"
+author: "Ross W."
+format: html
+editor: visual
+---
+
+## Summary of CPA Channel Stats
+
+I've put together this summary of stats that explain Referrals as their related to Opportunities.
+
+```{r, setup, code-fold: FALSE, echo=FALSE, warning=FALSE, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(scales)
+library(salesforcer)
+library(gt)
+library(lubridate)
+library(knitr)
+
+```
+
+```{r, referring_firm, echo=FALSE, fold=FALSE, warning=FALSE, include=FALSE}
+
+# 1. Referring Firm
+query0 <- "SELECT id, Referring_CPA__c FROM opportunity"
+
+referring_firm <- sf_query(query0) %>%
+  filter(!is.na(Referring_CPA__c) & Referring_CPA__c != "")
+
+referring_firm <- referring_firm %>% 
+  select(Id, Account_Id = Referring_CPA__c)
+
+```
+
+```{r, referral_1, echo=FALSE, fold=FALSE, warning=FALSE, include=FALSE}
+
+# 2. Referral 1 Acct
+query <- "SELECT id, referral_1_account__c FROM opportunity"
+
+# Use a different variable name for the query result
+referral_1_acct_data <- sf_query(query) %>%
+  filter(!is.na(Referral_1_Account__c) & Referral_1_Account__c != "")
+
+referral_1_acct_data <- referral_1_acct_data %>% 
+  select(Id, Account_Id = Referral_1_Account__c)
+
+```
+
+```{r, referral_2, echo=FALSE, fold=FALSE, warning=FALSE, include=FALSE}
+
+# 3. Referral 2 Account
+query2 <- "SELECT id, referral_2_account__c FROM opportunity"
+
+# Use a different variable name for the query result
+referral_2_acct<- sf_query(query2) %>%
+  filter(!is.na(Referral_2_Account__c) & Referral_2_Account__c != "")
+
+referral_2_acct <- referral_2_acct %>% 
+  select(Id, Account_Id = Referral_2_Account__c)
+```
+
+```{r, merging_accounts, echo=FALSE, include=FALSE, warning=FALSE}
+
+# Merge Referring Account ---------------------------------
+
+# Appending all 3 data frames that contained referring accounts
+appended.frames <- bind_rows(referring_firm,referral_2_acct,referral_1_acct_data) %>% 
+  distinct(Id, Account_Id, .keep_all = TRUE )
+
+# Bringing in all the other fields for Opportunity 
+query3 <- "SELECT id, ACV_for_Quotas__c, Record_Type_Name__c, StageName, shov_revenue_type__c, CloseDate, TCV_Gross__c, 
+OwnerId FROM opportunity"
+
+opp_fields <- sf_query(query3)
+
+# Merge Opp fields with REFERRING appended_frames-----------
+merged_referral_accts <- left_join(appended.frames, opp_fields, by = "Id")
+
+
+```
+
+```{r, main_Frame, echo=FALSE, include=FALSE, warning=FALSE}
+# Bringing in ALL Opportunities with All Fields 
+
+query5 <- "SELECT id, ACV_for_Quotas__c, Record_Type_Name__c, StageName, shov_revenue_type__c, CloseDate, TCV_Gross__c, 
+CPA_Contact_Account__c, Referring_CPA__c, referral_1_account__c, Referral_2_Account__c FROM opportunity"
+
+all_opps_and_feilds <- sf_query(query5)
+
+# --- Adding 'Has Referral' Column
+
+all_opps_and_feilds <- all_opps_and_feilds %>%
+  mutate(
+    category = if_else(
+      !is.na(Referring_CPA__c) & Referring_CPA__c != "" |
+        !is.na(Referral_2_Account__c) & Referral_2_Account__c != "" |
+        !is.na(Referral_1_Account__c) & Referral_1_Account__c != "",
+      "Has Referral",
+      "No Referral"
+    )
+  )
+```
+
+The following table displays the increased closing rate among opportunities with Referrals
+
+```{r, referral_frame, echo=FALSE, warning=FALSE}
+
+# Step 1: Calculate win percentage by year and referral status
+win_percentage <- all_opps_and_feilds %>%
+  filter(year(CloseDate) >= 2018, StageName %in% c("6 - Closed Won", "7 - Closed Lost")) %>%
+  mutate(
+    year = year(CloseDate),
+    category = if_else(
+      !is.na(Referring_CPA__c) & Referring_CPA__c != "" |
+        !is.na(Referral_2_Account__c) & Referral_2_Account__c != "" |
+        !is.na(Referral_1_Account__c) & Referral_1_Account__c != "",
+      "Win % with Referral",
+      "Win % without Referral"
+    )
+  ) %>%
+  group_by(year, category) %>%
+  summarise(
+    win_percentage = (sum(StageName == "6 - Closed Won") / n()) * 100,
+    .groups = "drop"
+  )
+
+
+# Step 2: Calculate total count of opportunities by year
+total_count <- all_opps_and_feilds %>%
+  filter(year(CloseDate) >= 2018, StageName %in% c("6 - Closed Won", "7 - Closed Lost")) %>%
+  mutate(year = year(CloseDate)) %>%
+  group_by(year) %>%
+  summarise(
+    total_opps = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    category = "Total Count of Opps", 
+    win_percentage = as.integer(round(total_opps))  # Round and convert to integer for no decimals
+  ) %>%
+  select(year, category, win_percentage)
+
+
+# Step 3: Combine win_percentage and total_count summaries
+win_percentage_summary <- bind_rows(win_percentage, total_count) %>%
+  # Format percentages to one decimal place with % sign; keep total counts as integers
+  mutate(across(starts_with("win_percentage"), 
+                ~ if_else(category == "Total Count of Opps", 
+                          as.character(round(as.numeric(.))), # Total Count with no decimals
+                          paste0(round(as.numeric(.), 1), "%") # Win % with one decimal place and % sign
+                ))) %>%
+  # Pivot to wider format
+  pivot_wider(
+    names_from = year,
+    values_from = win_percentage
+  )
+
+# Render the table with gt
+win_percentage_summary %>%
+  gt() %>%
+  tab_header(
+    title = "Win Percentage and Opportunity Count by Year",
+    subtitle = "Comparison of Referral and Non-Referral Opportunities from 2018 Onwards"
+  ) %>%
+  fmt_missing(
+    columns = everything(),
+    missing_text = "-"
+  ) %>%
+  cols_label(
+    category = "Metric"
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  )
+
+```
+
+The following table gives includes Referral ACV for the respective years along with the \# of opportunities that had referrals
+
+```{r, DU_Yearly_Summary, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+
+
+# Step 1: Filter, Group, and Summarize
+filtered_summary <- merged_referral_accts %>%
+  filter(StageName == "6 - Closed Won") %>%
+  group_by(Account_Id) %>%
+  summarise(
+    total_acv = sum(ACV_for_Quotas__c, na.rm = TRUE),
+    opportunity_count = n()
+  )
+
+# Step 2: Create Yearly Summary Table
+yearly_summary <- merged_referral_accts %>%
+  filter(StageName == "6 - Closed Won") %>%
+  mutate(
+    year = lubridate::year(CloseDate),
+    ACV_for_Quotas__c = replace_na(ACV_for_Quotas__c, 0)
+  ) %>%
+  filter(year >= 2018) %>%
+  group_by(year) %>%
+  summarise(
+    referral_acv = dollar(sum(ACV_for_Quotas__c)), 
+    opportunity_count = as.character(n())
+  ) %>%
+  pivot_longer(
+    cols = c(referral_acv, opportunity_count), 
+    names_to = "metric", 
+    values_to = "value"
+  ) %>%
+  pivot_wider(
+    names_from = year,
+    values_from = value
+  )
+
+# Use gt for enhanced HTML table output
+yearly_summary %>%
+  gt() %>%
+  tab_header(
+    title = "Yearly Opportunity Summary by Referral",
+    subtitle = "ACV Totals and Opportunity Counts from 2018 to Present"
+  )
+
+```
+
+```{r, DU_third_frame, echo=FALSE, include=FALSE}
+yearly_referralSummary_table <- merged_referral_accts %>%
+  filter(StageName == "6 - Closed Won") %>%
+  mutate(
+    year = year(CloseDate),
+    ACV_for_Quotas__c = replace_na(ACV_for_Quotas__c, 0) 
+    # Replace NA with 0 if necessary
+  ) %>%
+  filter(year >= 2018) %>%
+  group_by(year) %>%
+  summarise(
+    opportunity_count = n_distinct(Id),                                
+    # Distinct opportunity count
+    referral_acv = dollar(sum(ACV_for_Quotas__c[!duplicated(Id)]), accuracy = 1), 
+    # Unique ACV per opportunity
+    distinct_referral_accounts = n_distinct(Account_Id)                
+    # Distinct referral accounts per year
+  ) %>%
+  mutate(across(c(referral_acv, opportunity_count, distinct_referral_accounts), as.character)) %>%  # Convert all to character
+  pivot_longer(
+    cols = c(referral_acv, opportunity_count, distinct_referral_accounts), 
+    names_to = "metric", 
+    values_to = "value"
+  ) %>%
+  pivot_wider(
+    names_from = year,
+    values_from = value
+  )
+
+print(yearly_referralSummary_table)
+```
+
+```{r, warning=FALSE, echo=FALSE}
+# Render with gt
+yearly_referralSummary_table %>%
+  gt() %>%
+  tab_header(
+    title = "Yearly Referral Summary",
+    subtitle = "Opportunities and ACV by Year (2018 and onward)"
+  ) %>%
+  fmt_number(
+    columns = -metric,  # Format all columns except 'metric'
+    decimals = 1
+  ) %>%
+  cols_label(
+    metric = "Metric"
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  )
+```
